@@ -1,0 +1,31 @@
+# Python 가상환경
+venv/
+d_studio/
+*.env
+
+# Python 캐시 파일
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE 관련 파일
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 로그 파일
+*.log
+
+# 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 패키지 관련
+*.egg-info/
+dist/
+build/
+
+# 기타 임시 파일
+*.tmp
+*.bak

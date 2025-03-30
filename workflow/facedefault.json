@@ -1,0 +1,102 @@
+{
+    "id": "9bbed802-97e4-4584-a9ad-c76036547af9",
+    "revision": 0,
+    "last_node_id": 5,
+    "last_link_id": 4,
+    "nodes": [
+      {
+        "id": 1,
+        "type": "LoadImage",
+        "pos": [421.31341552734375, 409.36358642578125],
+        "size": [315, 314],
+        "flags": {},
+        "order": 0,
+        "mode": 0,
+        "inputs": [],
+        "outputs": [
+          {"localized_name": "IMAGE", "name": "IMAGE", "type": "IMAGE", "slot_index": 0, "links": [1]},
+          {"localized_name": "MASK", "name": "MASK", "type": "MASK", "links": null}
+        ],
+        "title": "rolemodelimage",
+        "properties": {"cnr_id": "comfy-core", "ver": "0.3.26", "Node name for S&R": "LoadImage"},
+        "widgets_values": ["cafegirl.png", "image", ""]
+      },
+      {
+        "id": 2,
+        "type": "LoadImage",
+        "pos": [480.09619140625, 780.3387451171875],
+        "size": [315, 314],
+        "flags": {},
+        "order": 1,
+        "mode": 0,
+        "inputs": [],
+        "outputs": [
+          {"localized_name": "IMAGE", "name": "IMAGE", "type": "IMAGE", "slot_index": 0, "links": [2]},
+          {"localized_name": "MASK", "name": "MASK", "type": "MASK", "links": null}
+        ],
+        "title": "originalImage",
+        "properties": {"cnr_id": "comfy-core", "ver": "0.3.26", "Node name for S&R": "LoadImage"},
+        "widgets_values": ["23png.png", "image", ""]
+      },
+      {
+        "id": 3,
+        "type": "ReActorFaceSwap",
+        "pos": [922.1331787109375, 404.0111389160156],
+        "size": [315, 358],
+        "flags": {},
+        "order": 2,
+        "mode": 0,
+        "inputs": [
+          {"localized_name": "input_image", "name": "input_image", "type": "IMAGE", "link": 1},
+          {"localized_name": "source_image", "name": "source_image", "shape": 7, "type": "IMAGE", "link": 2},
+          {"localized_name": "face_model", "name": "face_model", "shape": 7, "type": "FACE_MODEL", "link": null},
+          {"localized_name": "face_boost", "name": "face_boost", "shape": 7, "type": "FACE_BOOST", "link": null}
+        ],
+        "outputs": [
+          {"localized_name": "IMAGE", "name": "IMAGE", "type": "IMAGE", "slot_index": 0, "links": [3, 4]},
+          {"localized_name": "FACE_MODEL", "name": "FACE_MODEL", "type": "FACE_MODEL", "links": null}
+        ],
+        "properties": {"cnr_id": "comfyui-reactor", "ver": "d901609a1d5d1942a6b069b2f8f3778fee3a7134", "Node name for S&R": "ReActorFaceSwap"},
+        "widgets_values": [true, "inswapper_128.onnx", "YOLOv5l", "GPEN-BFR-1024.onnx", 1, 0.5, "no", "no", "0", "0", 1]
+      },
+      {
+        "id": 5,
+        "type": "SaveImage",
+        "pos": [1450.1239013671875, 198.74989318847656],
+        "size": [315, 270],
+        "flags": {},
+        "order": 4,
+        "mode": 0,
+        "inputs": [{"localized_name": "images", "name": "images", "type": "IMAGE", "link": 4}],
+        "outputs": [],
+        "properties": {"cnr_id": "comfy-core", "ver": "0.3.27", "Node name for S&R": "SaveImage"},
+        "widgets_values": ["ComfyUI"]
+      },
+      {
+        "id": 4,
+        "type": "PreviewImage",
+        "pos": [1458.1497802734375, 568.6683349609375],
+        "size": [564.2672729492188, 589.3667602539062],
+        "flags": {},
+        "order": 3,
+        "mode": 0,
+        "inputs": [{"localized_name": "images", "name": "images", "type": "IMAGE", "link": 3}],
+        "outputs": [],
+        "properties": {"cnr_id": "comfy-core", "ver": "0.3.26", "Node name for S&R": "PreviewImage"},
+        "widgets_values": []
+      }
+    ],
+    "links": [
+      [1, 1, 0, 3, 0, "IMAGE"],
+      [2, 2, 0, 3, 1, "IMAGE"],
+      [3, 3, 0, 4, 0, "IMAGE"],
+      [4, 3, 0, 5, 0, "IMAGE"]
+    ],
+    "groups": [],
+    "config": {},
+    "extra": {
+      "ds": {"scale": 1, "offset": [-145, -115]},
+      "ue_links": []
+    },
+    "version": 0.4
+  }

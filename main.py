@@ -8,17 +8,19 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import asyncio
 import aiohttp
+import firebase_admin
+
 from firebase_admin import credentials, initialize_app, storage
 import face
 import httpx
 import logging
 
 # Firebase 초기화 (주석 처리: 필요시 해제)
-# cred = credentials.Certificate('firebase-adminsdk-credentials.json')
-# initialize_app(cred, {
-#     'storageBucket': 'your-storage-bucket.appspot.com'
-# })
-# bucket = storage.bucket()
+cred = credentials.Certificate('firebase-adminsdk-credentials.json')
+initialize_app(cred, {
+    'storageBucket': 'hairai-21bb9.firebasestorage.app'  # 여기를 수정
+})
+bucket = storage.bucket()
 
 # ComfyUI 서버 주소
 COMFYUI_API_URL = "http://127.0.0.1:8188"
@@ -57,13 +59,12 @@ async def read_root():
 async def create_upload_file(file: UploadFile):
     try:
         # Firebase 연동 주석 처리
-        # blob = bucket.blob(f'createdImageUrl/{file.filename}')
-        # blob.upload_from_file(file.file)
-        # blob.make_public()
-        # return {"result": blob.public_url}
+        blob = bucket.blob(f'images/{file.filename}')
+        blob.upload_from_file(file.file)
+        blob.make_public()
+        return {"result": blob.public_url}
         
-        # Firebase 미연동 시 임시 응답
-        return {"result": f"http://example.com/images/{file.filename}", "note": "Firebase 연동이 비활성화되어 있습니다."}
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -72,16 +73,14 @@ async def create_upload_file(file: UploadFile):
 async def find_all_image_url():
     try:
         # Firebase 연동 주석 처리
-        # blobs = bucket.list_blobs(prefix="createdImageUrl/")
-        # imageUrlList = []
-        # for blob in blobs:
-        #     blob.make_public()
-        #     imageUrlList.append(blob.public_url)
-        # return {"result": imageUrlList}
+        blobs = bucket.list_blobs(prefix="images/")
+        imageUrlList = []
+        for blob in blobs:
+            blob.make_public()
+            imageUrlList.append(blob.public_url)
+        return {"result": imageUrlList}
         
-        # Firebase 미연동 시 임시 응답
-        return {"result": ["http://example.com/images/sample1.jpg", "http://example.com/images/sample2.jpg"], 
-                "note": "Firebase 연동이 비활성화되어 있습니다."}
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -90,27 +89,21 @@ async def find_all_image_url():
 async def delete_by_image(imageUrl: str):
     try:
         # Firebase 연동 주석 처리
-        # blobs = bucket.list_blobs(prefix="createdImageUrl/")
-        # beforeDelete = []
-        # afterDelete = []
-        # for blob in blobs:
-        #     beforeDelete.append(blob.public_url)
-        #     blob.make_public()
-        #     if blob.public_url == imageUrl:
-        #         blob.delete()
-        #     else:
-        #         afterDelete.append(blob.public_url)
-        # return {
-        #     "삭제 전 이미지 리스트": beforeDelete,
-        #     "삭제 후 이미지 리스트": afterDelete
-        # }
-        
-        # Firebase 미연동 시 임시 응답
+        blobs = bucket.list_blobs(prefix="createdImageUrl/")
+        beforeDelete = []
+        afterDelete = []
+        for blob in blobs:
+            beforeDelete.append(blob.public_url)
+            blob.make_public()
+            if blob.public_url == imageUrl:
+                blob.delete()
+            else:
+                afterDelete.append(blob.public_url)
         return {
-            "삭제 전 이미지 리스트": ["http://example.com/images/sample1.jpg", imageUrl, "http://example.com/images/sample2.jpg"],
-            "삭제 후 이미지 리스트": ["http://example.com/images/sample1.jpg", "http://example.com/images/sample2.jpg"],
-            "note": "Firebase 연동이 비활성화되어 있습니다."
+            "삭제 전 이미지 리스트": beforeDelete,
+            "삭제 후 이미지 리스트": afterDelete
         }
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -127,7 +120,7 @@ async def transform_face(
 ):
     try:
         # 파일 크기 검증 (10MB 제한)
-        file_size_limit = 10 * 1024 * 1024  # 10MB
+        file_size_limit = 5 * 1024 * 1024  # 5MB
         for img_file in [original_image, role_model_image]:
             content = await img_file.read()
             if len(content) > file_size_limit:
@@ -248,10 +241,34 @@ async def transform_face(
         result_image_url = output_images[0]
         print(f"DEBUG: 결과 이미지 URL: {result_image_url}")
         
-        # 응답 반환
+        # 결과 이미지 URL 사용
+        result_image_url = output_images[0]
+        print(f"DEBUG: 결과 이미지 URL: {result_image_url}")
+        
+        # ComfyUI 출력 디렉토리에서 파일 경로 구성
+        comfy_output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_url)
+        print(f"DEBUG: 로컬 파일 경로: {comfy_output_path}")
+        
+        # Firebase에 업로드 (results/ 폴더에 저장)
+        firebase_path = f"results/{str(uuid.uuid4())}.png"
+        firebase_url = None
+        
+        # 파일이 존재하는지 확인
+        if os.path.exists(comfy_output_path):
+            print(f"Firebase 업로드 시도: {comfy_output_path} -> {firebase_path}")
+            try:
+                firebase_url = upload_image_to_firebase(comfy_output_path, firebase_path)
+                print(f"Firebase 업로드 완료: {firebase_url}")
+            except Exception as upload_error:
+                print(f"Firebase 업로드 실패: {str(upload_error)}")
+        else:
+            print(f"경고: 로컬 파일을 찾을 수 없음: {comfy_output_path}")
+        
+        # 응답 반환 (기존 ComfyUI URL과 함께 Firebase URL도 반환)
         return {
             "status": "success",
             "result_image_url": f"{COMFYUI_API_URL}/view?filename={result_image_url}&subfolder=&type=output",
+            "firebase_url": firebase_url,  # Firebase URL 추가
             "message": "얼굴 변환이 완료되었습니다."
         }
     

@@ -14,6 +14,15 @@ from firebase_admin import credentials, initialize_app, storage
 import face
 import httpx
 import logging
+# 배경화면 생성 import다
+from pydantic import BaseModel
+from typing import Optional
+import newbackground
+# backclear.py 파일 import
+import backclear
+import os
+from pathlib import Path
+
 
 # Firebase 초기화 (주석 처리: 필요시 해제)
 cred = credentials.Certificate('firebase-adminsdk-credentials.json')
@@ -24,8 +33,10 @@ bucket = storage.bucket()
 
 # ComfyUI 서버 주소
 COMFYUI_API_URL = "http://127.0.0.1:8188"
-COMFYUI_OUTPUT_DIR = "D:/StabilityMatrix-win-x64/Data/Packages/ComfyUI/output"  # ComfyUI 출력 디렉토리 경로 (실제 환경에 맞게 수정 필요)
-
+# 환경 변수에서 가져오거나 기본값 사용
+COMFYUI_OUTPUT_DIR = os.getenv('COMFYUI_OUTPUT_DIR', "D:/StabilityMatrix-win-x64/Data/Packages/ComfyUI/output")
+BACKGROUND_WORKFLOW_PATH = "D:/choi-fastapi/workflow/backworkflow.json"  # 배경 화면 워크플로우 파일 
+BACKCLEAR_WORKFLOW_PATH = os.getenv('BACKCLEAR_WORKFLOW_PATH', "D:/choi-fastapi/workflow/BackClear.json")# 배경 제거 워크플로우 파일 경로 설정
 app = FastAPI(title="AI Face Transformation API")
 
 # 로거 설정
@@ -40,7 +51,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+# 배경화면 생성 요청 모델
+class BackgroundRequest(BaseModel):
+    day: str
+    gender: str
+    category: str
+    light: str
+    info: str
 # Firebase에 이미지 업로드 함수
 def upload_image_to_firebase(local_image_path, destination_blob_name):
     bucket = storage.bucket()
@@ -53,6 +70,187 @@ def upload_image_to_firebase(local_image_path, destination_blob_name):
 @app.get("/")
 async def read_root():
     return {"message": "AI Face Transformation API에 오신 것을 환영합니다!"}
+
+
+#여기서부터 배경화면 제거 엔드포인트
+@app.post("/api/backclear")
+async def remove_background(
+    image: UploadFile = File(...)
+):
+    try:
+        # 파일 크기 검증 (10MB 제한)
+        file_size_limit = 10 * 1024 * 1024  # 10MB
+        content = await image.read()
+        if len(content) > file_size_limit:
+            raise HTTPException(status_code=400, detail=f"파일 크기가 너무 큽니다: {image.filename}. 10MB 이하의 파일만 허용됩니다.")
+        
+        # 파일 포인터 위치 초기화
+        await image.seek(0)
+        
+        # 파일 타입 검증
+        if not image.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail=f"잘못된 파일 형식: {image.filename}. 이미지 파일만 허용됩니다.")
+        
+        # ComfyUI 서버 상태 확인
+        print(f"ComfyUI 서버 연결 테스트 중...")
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(f"{face.COMFYUI_API_URL}/") as response:
+                    print(f"ComfyUI 서버 응답: {response.status}")
+                    if response.status != 200:
+                        raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
+            except aiohttp.ClientError:
+                raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
+        
+        # 파일 콘텐츠 읽기
+        content = await image.read()
+        
+        # 배경 제거 작업 시작
+        print("배경 제거 작업 시작...")
+        
+        # 처리 시작
+        result_image_filename = await backclear.process_background_removal(
+            content,
+            BACKCLEAR_WORKFLOW_PATH
+        )
+        
+        if not result_image_filename:
+            raise HTTPException(status_code=500, detail="배경 제거 실패: 결과 이미지를 찾을 수 없습니다.")
+        
+        # ComfyUI 출력 디렉토리에서 파일 경로 구성
+        comfy_output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_filename)
+        print(f"로컬 파일 경로: {comfy_output_path}")
+        
+        # Firebase에 업로드 (removed_bg/ 폴더에 저장)
+        firebase_path = f"removed_bg/{str(uuid.uuid4())}.png"
+        firebase_url = None
+        
+        # 파일이 존재하는지 확인
+        if os.path.exists(comfy_output_path):
+            print(f"Firebase 업로드 시도: {comfy_output_path} -> {firebase_path}")
+            try:
+                firebase_url = upload_image_to_firebase(comfy_output_path, firebase_path)
+                print(f"Firebase 업로드 완료: {firebase_url}")
+            except Exception as upload_error:
+                print(f"Firebase 업로드 실패: {str(upload_error)}")
+        else:
+            print(f"경고: 로컬 파일을 찾을 수 없음: {comfy_output_path}")
+        
+        # 응답 반환
+        return {
+            "status": "success",
+            "result_image_url": f"{face.COMFYUI_API_URL}/view?filename={result_image_filename}&subfolder=&type=output",
+            "firebase_url": firebase_url,
+            "message": "배경 제거가 완료되었습니다."
+        }
+    
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print("상세 오류:", error_detail)
+        raise HTTPException(status_code=500, detail=f"배경 제거 실패: {str(e)}")
+
+#여기서부터 배경화면 생성 엔드포인트
+@app.post("/api/background")
+async def generate_background(
+    prompt: str = Form(...),
+    image: UploadFile = File(...)
+):
+    try:
+        # 파일 크기 검증 (10MB 제한)
+        file_size_limit = 10 * 1024 * 1024  # 10MB
+        content = await image.read()
+        if len(content) > file_size_limit:
+            raise HTTPException(status_code=400, detail=f"파일 크기가 너무 큽니다: {image.filename}. 10MB 이하의 파일만 허용됩니다.")
+        
+        # 파일 포인터 위치 초기화
+        await image.seek(0)
+        
+        # 파일 타입 검증
+        if not image.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail=f"잘못된 파일 형식: {image.filename}. 이미지 파일만 허용됩니다.")
+        
+        # JSON 프롬프트 파싱
+        try:
+            parsed_data = json.loads(prompt)
+            prompt_data = BackgroundRequest(**parsed_data)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="잘못된 프롬프트 형식. 유효한 JSON이 필요합니다.")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"프롬프트 파싱 오류: {str(e)}")
+        
+        # ComfyUI 서버 상태 확인
+        print(f"ComfyUI 서버 연결 테스트 중...")
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(f"{face.COMFYUI_API_URL}/") as response:
+                    print(f"ComfyUI 서버 응답: {response.status}")
+                    if response.status != 200:
+                        raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
+            except aiohttp.ClientError:
+                raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
+        
+        # 파일 콘텐츠 읽기
+        content = await image.read()
+        
+        # 배경화면 생성 작업 시작
+        print("배경화면 생성 작업 시작...")
+        
+        # 처리 시작
+        prompt_data_dict = prompt_data.dict()
+        result_image_filename = await newbackground.process_background_transformation(
+            content,
+            BACKGROUND_WORKFLOW_PATH,
+            prompt_data_dict
+        )
+        
+        if not result_image_filename:
+            raise HTTPException(status_code=500, detail="배경화면 생성 실패: 결과 이미지를 찾을 수 없습니다.")
+        
+        # ComfyUI 출력 디렉토리에서 파일 경로 구성
+        comfy_output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_filename)
+        print(f"로컬 파일 경로: {comfy_output_path}")
+        
+        # Firebase에 업로드 (background_results/ 폴더에 저장)
+        firebase_path = f"background_results/{str(uuid.uuid4())}.png"
+        firebase_url = None
+        
+        # 파일이 존재하는지 확인
+        if os.path.exists(comfy_output_path):
+            print(f"Firebase 업로드 시도: {comfy_output_path} -> {firebase_path}")
+            try:
+                firebase_url = upload_image_to_firebase(comfy_output_path, firebase_path)
+                print(f"Firebase 업로드 완료: {firebase_url}")
+            except Exception as upload_error:
+                print(f"Firebase 업로드 실패: {str(upload_error)}")
+        else:
+            print(f"경고: 로컬 파일을 찾을 수 없음: {comfy_output_path}")
+        
+        # 응답 반환
+        return {
+            "status": "success",
+            "result_image_url": f"{face.COMFYUI_API_URL}/view?filename={result_image_filename}&subfolder=&type=output",
+            "firebase_url": firebase_url,
+            "message": "배경화면 생성이 완료되었습니다."
+        }
+    
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print("상세 오류:", error_detail)
+        raise HTTPException(status_code=500, detail=f"배경화면 생성 실패: {str(e)}")
+#여기까지 배경화면 엔드포인드
+
+
+
+
+
+
+
 
 # 파일 업로드 엔드포인트
 @app.post("/uploadfile/")

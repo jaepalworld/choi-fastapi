@@ -1,0 +1,52 @@
+{
+    "1": {
+      "inputs": {
+        "image": "jiwon.png",
+        "upload": true
+      },
+      "class_type": "LoadImage",
+      "outputs": {
+        "IMAGE": ["IMAGE", 0],
+        "MASK": ["MASK", 0]
+      }
+    },
+    "2": {
+      "inputs": {
+        "image": ["1", 0],
+        "width": 512,
+        "height": 512,
+        "interpolation": "nearest",
+        "method": "stretch",
+        "condition": "always",
+        "multiple_of": 8
+      },
+      "class_type": "ImageResize+",
+      "outputs": {
+        "IMAGE": ["IMAGE", 0],
+        "width": ["INT", 0],
+        "height": ["INT", 0]
+      }
+    },
+    "3": {
+      "inputs": {
+        "images": ["2", 0],
+        "rem_mode": "RMBG-1.4",
+        "image_output": "Preview",
+        "save_prefix": "ComfyUI",
+        "add_background": "none"
+      },
+      "class_type": "easy imageRemBg",
+      "outputs": {
+        "image": ["IMAGE", 0],
+        "mask": ["MASK", 0]
+      }
+    },
+    "4": {
+      "inputs": {
+        "images": ["3", 0],
+        "filename_prefix": "ComfyUI"
+      },
+      "class_type": "SaveImage",
+      "outputs": {}
+    }
+  }

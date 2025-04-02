@@ -17,26 +17,29 @@ import logging
 # 배경화면 생성 import다
 from pydantic import BaseModel
 from typing import Optional
-import newbackground
 # backclear.py 파일 import
 import backclear
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 # Firebase 초기화 (주석 처리: 필요시 해제)
 cred = credentials.Certificate('firebase-adminsdk-credentials.json')
 initialize_app(cred, {
-    'storageBucket': 'hairai-21bb9.firebasestorage.app'  # 여기를 수정
+    'storageBucket': 'hairai-21bb9.firebasestorage.app'  
 })
 bucket = storage.bucket()
 
 # ComfyUI 서버 주소
-COMFYUI_API_URL = "http://127.0.0.1:8188"
-# 환경 변수에서 가져오거나 기본값 사용
-COMFYUI_OUTPUT_DIR = os.getenv('COMFYUI_OUTPUT_DIR', "D:/StabilityMatrix-win-x64/Data/Packages/ComfyUI/output")
-BACKGROUND_WORKFLOW_PATH = "D:/choi-fastapi/workflow/backworkflow.json"  # 배경 화면 워크플로우 파일 
-BACKCLEAR_WORKFLOW_PATH = os.getenv('BACKCLEAR_WORKFLOW_PATH', "D:/choi-fastapi/workflow/BackClear.json")# 배경 제거 워크플로우 파일 경로 설정
+# os.environ['BACKCLEAR_WORKFLOW_PATH'] = 'D:/choi-fastapi/workflow/BackClear.json'
+COMFYUI_API_URL = os.getenv('COMFYUI_API_URL')
+BACKCLEAR_WORKFLOW_PATH = os.getenv('BACKCLEAR_WORKFLOW_PATH')
+COMFYUI_OUTPUT_DIR = os.getenv('COMFYUI_OUTPUT_DIR')
+BACKGROUND_WORKFLOW_PATH = os.getenv('BACKGROUND_WORKFLOW_PATH')
 app = FastAPI(title="AI Face Transformation API")
 
 # 로거 설정
@@ -95,7 +98,7 @@ async def remove_background(
         print(f"ComfyUI 서버 연결 테스트 중...")
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(f"{face.COMFYUI_API_URL}/") as response:
+                async with session.get(f"{COMFYUI_API_URL}/") as response:
                     print(f"ComfyUI 서버 응답: {response.status}")
                     if response.status != 200:
                         raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
@@ -118,28 +121,45 @@ async def remove_background(
             raise HTTPException(status_code=500, detail="배경 제거 실패: 결과 이미지를 찾을 수 없습니다.")
         
         # ComfyUI 출력 디렉토리에서 파일 경로 구성
+        # 결과 이미지 파일 경로 확인
         comfy_output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_filename)
         print(f"로컬 파일 경로: {comfy_output_path}")
-        
-        # Firebase에 업로드 (removed_bg/ 폴더에 저장)
-        firebase_path = f"removed_bg/{str(uuid.uuid4())}.png"
-        firebase_url = None
-        
+
         # 파일이 존재하는지 확인
-        if os.path.exists(comfy_output_path):
-            print(f"Firebase 업로드 시도: {comfy_output_path} -> {firebase_path}")
-            try:
-                firebase_url = upload_image_to_firebase(comfy_output_path, firebase_path)
-                print(f"Firebase 업로드 완료: {firebase_url}")
-            except Exception as upload_error:
-                print(f"Firebase 업로드 실패: {str(upload_error)}")
-        else:
+        if not os.path.exists(comfy_output_path):
             print(f"경고: 로컬 파일을 찾을 수 없음: {comfy_output_path}")
-        
+            # 최근 생성된 파일 찾기
+            newest_file = None
+            newest_time = 0
+            for file in os.listdir(COMFYUI_OUTPUT_DIR):
+                file_path = os.path.join(COMFYUI_OUTPUT_DIR, file)
+                file_time = os.path.getmtime(file_path)
+                if file_time > newest_time:
+                    newest_time = file_time
+                    newest_file = file
+            
+            if newest_file:
+                print(f"최근 생성된 파일 사용: {newest_file}")
+                result_image_filename = newest_file
+                comfy_output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_filename)
+
+        # 결과 URL 구성 및 Firebase 업로드
+        result_url = f"{COMFYUI_API_URL}/view?filename={result_image_filename}&subfolder=&type=output"
+        firebase_url = None
+
+        if os.path.exists(comfy_output_path):
+            try:
+                firebase_path = f"removed_bg/{str(uuid.uuid4())}.png"
+                firebase_url = upload_image_to_firebase(comfy_output_path, firebase_path)
+                print(f"Firebase 업로드 성공: {firebase_url}")
+            except Exception as e:
+                print(f"Firebase 업로드 실패: {str(e)}")
+                # Firebase 업로드 실패해도 ComfyUI URL은 반환
+
         # 응답 반환
         return {
             "status": "success",
-            "result_image_url": f"{face.COMFYUI_API_URL}/view?filename={result_image_filename}&subfolder=&type=output",
+            "result_image_url": result_url,
             "firebase_url": firebase_url,
             "message": "배경 제거가 완료되었습니다."
         }
@@ -185,7 +205,7 @@ async def generate_background(
         print(f"ComfyUI 서버 연결 테스트 중...")
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(f"{face.COMFYUI_API_URL}/") as response:
+                async with session.get(f"{COMFYUI_API_URL}/") as response:
                     print(f"ComfyUI 서버 응답: {response.status}")
                     if response.status != 200:
                         raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
@@ -231,7 +251,7 @@ async def generate_background(
         # 응답 반환
         return {
             "status": "success",
-            "result_image_url": f"{face.COMFYUI_API_URL}/view?filename={result_image_filename}&subfolder=&type=output",
+            "result_image_url": f"{COMFYUI_API_URL}/view?filename={result_image_filename}&subfolder=&type=output",
             "firebase_url": firebase_url,
             "message": "배경화면 생성이 완료되었습니다."
         }

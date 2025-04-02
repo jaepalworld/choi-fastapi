@@ -205,21 +205,40 @@ async def process_background_removal(
             
         print("결과 수신됨, 출력 찾는 중...")
         
+        
         # 결과 이미지 파일명 추출
         output_images = []
+        print("모든 출력 노드 검사:")
         for node_id, node_output in result.get("outputs", {}).items():
+            print(f"노드 ID: {node_id}, 출력: {node_output}")
             if "images" in node_output:
                 for img in node_output["images"]:
                     output_images.append(img["filename"])
                     print(f"결과 이미지 발견: {img['filename']}")
-        
-        # 첫 번째 결과 이미지 반환
+
+        # 출력 이미지 목록 확인
         if output_images:
-            print(f"최종 결과 이미지: {output_images[0]}")
-            return output_images[0]
+            print(f"모든 결과 이미지: {output_images}")
+            # SaveImage 노드의 출력(일반적으로 ComfyUI_로 시작)을 우선 사용
+            save_image = next((img for img in output_images if img.startswith("ComfyUI_")), None)
+            if save_image:
+                print(f"SaveImage 출력 사용: {save_image}")
+                return save_image
+            else:
+                print(f"첫 번째 이미지 사용: {output_images[0]}")
+                return output_images[0]
         else:
             print("오류: 결과 이미지 없음")
             return None
+
+        
+        # 첫 번째 결과 이미지 반환
+        # if output_images:
+        #     print(f"최종 결과 이미지: {output_images[0]}")
+        #     return output_images[0]
+        # else:
+        #     print("오류: 결과 이미지 없음")
+        #     return None
     
     except Exception as e:
         import traceback

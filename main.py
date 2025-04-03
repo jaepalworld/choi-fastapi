@@ -1,7 +1,6 @@
 import os
 import uuid
 import json
-from typing import Optional
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,8 +19,10 @@ from typing import Optional
 # backclear.py 파일 import
 import backclear
 import os
+import backcreate
 from pathlib import Path
 from dotenv import load_dotenv
+from typing import Dict, Any, List, Tuple
 
 
 load_dotenv()
@@ -74,7 +75,15 @@ def upload_image_to_firebase(local_image_path, destination_blob_name):
 async def read_root():
     return {"message": "AI Face Transformation API에 오신 것을 환영합니다!"}
 
+# 배경 생성 요청 모델 (기존 BackgroundRequest 모델 사용 또는 새로 정의)
+class BackCreateRequest(BaseModel):
+    positive_prompt: Optional[str] = "best quality, beautiful lighting, highly detailed background"
+    negative_prompt: Optional[str] = "lowres, bad anatomy, bad hands, cropped, worst quality, nsfw"
 
+    light_source: Optional[str] = "Top Left Light"
+    light_color: Optional[str] = "#FFFFFF"
+    light_intensity: Optional[float] = 1.0
+    seed: Optional[int] = 2222
 #여기서부터 배경화면 제거 엔드포인트
 @app.post("/api/backclear")
 async def remove_background(
@@ -172,11 +181,11 @@ async def remove_background(
         print("상세 오류:", error_detail)
         raise HTTPException(status_code=500, detail=f"배경 제거 실패: {str(e)}")
 
-#여기서부터 배경화면 생성 엔드포인트
+# new new new new new 이게 new 배경 생성 엔드포인트
 @app.post("/api/background")
-async def generate_background(
-    prompt: str = Form(...),
-    image: UploadFile = File(...)
+async def create_background(
+    image: UploadFile = File(...),
+    prompt: str = Form(...)
 ):
     try:
         # 파일 크기 검증 (10MB 제한)
@@ -195,7 +204,9 @@ async def generate_background(
         # JSON 프롬프트 파싱
         try:
             parsed_data = json.loads(prompt)
-            prompt_data = BackgroundRequest(**parsed_data)
+            # 파싱된 데이터 검증
+            if not isinstance(parsed_data, dict):
+                raise HTTPException(status_code=400, detail="잘못된 프롬프트 형식. 유효한 JSON 객체가 필요합니다.")
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="잘못된 프롬프트 형식. 유효한 JSON이 필요합니다.")
         except Exception as e:
@@ -215,26 +226,32 @@ async def generate_background(
         # 파일 콘텐츠 읽기
         content = await image.read()
         
-        # 배경화면 생성 작업 시작
-        print("배경화면 생성 작업 시작...")
+        # 배경 생성 작업 시작
+        print("배경 생성 작업 시작...")
+        
+        # 워크플로우 파일 경로 설정
+        workflow_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workflow', 'BackCreate.json')
+        if not os.path.exists(workflow_path):
+            workflow_path = os.getenv('BACKGROUND_WORKFLOW_PATH')
+            if not workflow_path or not os.path.exists(workflow_path):
+                raise HTTPException(status_code=404, detail="워크플로우 파일을 찾을 수 없습니다.")
         
         # 처리 시작
-        prompt_data_dict = prompt_data.dict()
-        result_image_filename = await newbackground.process_background_transformation(
+        result_image_filename = await backcreate.process_background_creation(
             content,
-            BACKGROUND_WORKFLOW_PATH,
-            prompt_data_dict
+            parsed_data,
+            workflow_path
         )
         
         if not result_image_filename:
-            raise HTTPException(status_code=500, detail="배경화면 생성 실패: 결과 이미지를 찾을 수 없습니다.")
+            raise HTTPException(status_code=500, detail="배경 생성 실패: 결과 이미지를 찾을 수 없습니다.")
         
         # ComfyUI 출력 디렉토리에서 파일 경로 구성
         comfy_output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_filename)
         print(f"로컬 파일 경로: {comfy_output_path}")
         
         # Firebase에 업로드 (background_results/ 폴더에 저장)
-        firebase_path = f"background_results/{str(uuid.uuid4())}.png"
+        firebase_path = f"background_created/{str(uuid.uuid4())}.png"
         firebase_url = None
         
         # 파일이 존재하는지 확인
@@ -253,7 +270,7 @@ async def generate_background(
             "status": "success",
             "result_image_url": f"{COMFYUI_API_URL}/view?filename={result_image_filename}&subfolder=&type=output",
             "firebase_url": firebase_url,
-            "message": "배경화면 생성이 완료되었습니다."
+            "message": "배경 생성이 완료되었습니다."
         }
     
     except HTTPException as e:
@@ -262,9 +279,7 @@ async def generate_background(
         import traceback
         error_detail = traceback.format_exc()
         print("상세 오류:", error_detail)
-        raise HTTPException(status_code=500, detail=f"배경화면 생성 실패: {str(e)}")
-#여기까지 배경화면 엔드포인드
-
+        raise HTTPException(status_code=500, detail=f"배경 생성 실패: {str(e)}")
 
 
 
@@ -499,17 +514,63 @@ async def transform_face(
         raise HTTPException(status_code=500, detail=f"변환 실패: {str(e)}")
 
 # 워크플로우 로딩 함수
-async def load_workflow(file_path: str):
+async def load_workflow(workflow_path: str) -> dict:
+    """
+    워크플로우 JSON 파일을 로드하고 ComfyUI API 형식으로 변환합니다.
+    """
     try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            workflow = json.load(file)
-        return workflow
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"워크플로우 파일을 찾을 수 없습니다: '{file_path}'")
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail=f"파일 '{file_path}'이 유효한 JSON 형식이 아닙니다.")
+        with open(workflow_path, 'r', encoding='utf-8') as file:
+            workflow_data = json.load(file)
+        
+        # ComfyUI 웹 UI 형식인 경우 (nodes와 links가 있는 경우)
+        if "nodes" in workflow_data and "links" in workflow_data:
+            print("ComfyUI 웹 UI 형식의 워크플로우를 API 형식으로 변환합니다...")
+            
+            # 노드 ID를 문자열로 변환하여 API 형식으로 준비
+            api_workflow = {}
+            
+            # 1. 먼저 모든 노드를 기본 구조로 변환
+            for node in workflow_data["nodes"]:
+                node_id = str(node["id"])
+                api_workflow[node_id] = {
+                    "class_type": node["type"],
+                    "inputs": {},
+                    "outputs": {}
+                }
+                
+                # 위젯 값이 있으면 추가
+                if "widgets_values" in node:
+                    for i, value in enumerate(node["widgets_values"]):
+                        widget_name = f"widget_{i}"
+                        api_workflow[node_id]["inputs"][widget_name] = value
+            
+            # 2. 링크 정보로 노드 연결 구성
+            for link in workflow_data["links"]:
+                # link 형식: [link_id, source_node_id, source_slot, target_node_id, target_slot, ...]
+                if len(link) >= 5:  # 최소 5개 요소 필요
+                    source_node_id = str(link[1])
+                    source_slot = link[2]
+                    target_node_id = str(link[3])
+                    target_slot = link[4]
+                    
+                    # 소스 노드와 타겟 노드 찾기
+                    if source_node_id in api_workflow and target_node_id in api_workflow:
+                        # 타겟 노드의 입력에 소스 노드 연결
+                        # 입력 이름 찾기 (노드 구조에 따라 달라질 수 있음)
+                        source_node = next((n for n in workflow_data["nodes"] if str(n["id"]) == source_node_id), None)
+                        target_node = next((n for n in workflow_data["nodes"] if str(n["id"]) == target_node_id), None)
+                        
+                        if source_node and target_node and "inputs" in target_node and len(target_node["inputs"]) > target_slot:
+                            input_name = target_node["inputs"][target_slot]["name"]
+                            api_workflow[target_node_id]["inputs"][input_name] = [source_node_id, source_slot]
+            
+            return api_workflow
+        else:
+            # 이미 API 형식인 경우
+            return workflow_data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"워크플로우 로딩 중 오류 발생: {str(e)}")
+        print(f"워크플로우 로딩 중 오류: {str(e)}")
+        raise
 
 # 결과 이미지 URL 가져오기 함수
 async def get_output_images(prompt_id: str):

@@ -169,8 +169,8 @@ async def check_progress(prompt_id: str) -> Dict[str, Any]:
     
     try:
         async with aiohttp.ClientSession() as session:
-            # 시간 초과 설정을 300초(5분)으로 늘림
-            max_attempts = 360  # 최대 360번 시도 (6분)
+            # 시간 초과 설정을 180초(30분)으로 늘림
+            max_attempts = 1800  # 최대 1800번 시도 (30분)
             for attempt in range(max_attempts):
                 async with session.get(history_url) as response:
                     if response.status != 200:

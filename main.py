@@ -4,6 +4,7 @@ import json
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import asyncio
 import aiohttp
@@ -20,6 +21,7 @@ from typing import Optional
 import backclear
 import os
 import backcreate
+import HairStyle
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any, List, Tuple
@@ -62,6 +64,15 @@ class BackgroundRequest(BaseModel):
     category: str
     light: str
     info: str
+
+# 헤어스타일 생성 요청 모델
+class HairStyleRequest(BaseModel):
+    hair_dir: str = "D:\\StabilityMatrix-win-x64\\HairImage"
+    hair_count: int = 4
+    face_restoration: float = 0.5
+    batch_size: int = 4
+    filename_prefix: str = "HairConsulting"
+
 # Firebase에 이미지 업로드 함수
 def upload_image_to_firebase(local_image_path, destination_blob_name):
     bucket = storage.bucket()
@@ -345,6 +356,80 @@ class TransformRequest(BaseModel):
     original_image: Optional[str] = None
     role_model_image: Optional[str] = None
 
+
+
+# 이미지 제공 엔드포인트 추가
+@app.get("/api/images/{filename}")
+async def get_image(filename: str):
+    """이미지 파일을 제공합니다"""
+    try:
+        # 폴더 경로 정규화
+        normalized_output_dir = COMFYUI_OUTPUT_DIR.replace('\\', '/')
+        
+        # 먼저 정확한 파일명으로 시도
+        file_path = os.path.join(normalized_output_dir, filename).replace('\\', '/')
+        print(f"요청 파일 경로: {file_path}")
+        
+        # 파일이 존재하지 않는 경우
+        if not os.path.exists(file_path):
+            print(f"파일을 찾을 수 없음: {file_path}")
+            
+            # 출력 디렉토리의 모든 파일 가져오기
+            try:
+                all_files = os.listdir(normalized_output_dir)
+                print(f"출력 디렉토리 내 파일 수: {len(all_files)}")
+                print(f"몇 가지 파일명: {all_files[:5] if all_files else []}")
+                
+                # 요청된 파일명에 해당하는 패턴의 파일명 추출
+                # 1. temp_kcogy_ 패턴 제거
+                simple_filename = filename.replace("temp_kcogy_", "")
+                
+                # 2. 숫자 부분 추출
+                import re
+                num_match = re.search(r'_(\d+)_', filename)
+                if num_match:
+                    num_str = num_match.group(1)
+                    print(f"추출한 숫자: {num_str}")
+                    
+                    # 숫자 부분을 패턴으로 맞는 파일 찾기
+                    pattern_files = [f for f in all_files if num_str in f]
+                    print(f"패턴 일치 파일: {pattern_files}")
+                    
+                    if pattern_files:
+                        filename = pattern_files[0]
+                        file_path = os.path.join(normalized_output_dir, filename).replace('\\', '/')
+                        print(f"패턴 매칭으로 찾은 파일: {file_path}")
+                
+                # 3. 패턴 매칭으로 찾지 못했다면 가장 최근 파일 사용
+                if not os.path.exists(file_path) and all_files:
+                    all_files.sort(key=lambda x: os.path.getmtime(os.path.join(normalized_output_dir, x)), reverse=True)
+                    newest_file = all_files[0]
+                    file_path = os.path.join(normalized_output_dir, newest_file).replace('\\', '/')
+                    print(f"최신 파일 사용: {file_path}")
+            except Exception as e:
+                print(f"디렉토리 탐색 중 오류: {str(e)}")
+        
+        # 파일이 존재하는지 최종 확인
+        if os.path.exists(file_path):
+            return FileResponse(file_path)
+        else:
+            # ComfyUI 서버에서 직접 가져오기 시도
+            try:
+                comfy_url = f"{COMFYUI_API_URL}/view?filename={filename}&subfolder=&type=output"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(comfy_url) as response:
+                        if response.status == 200:
+                            image_data = await response.read()
+                            return Response(content=image_data, media_type="image/png")
+            except Exception as e:
+                print(f"ComfyUI에서 직접 가져오기 실패: {str(e)}")
+            
+            raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
+    except Exception as e:
+        print(f"이미지 제공 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"이미지 제공 실패: {str(e)}")
+    
+    
 # 얼굴 변환 엔드포인트 부분의 코드 수정 (main.py 파일의 일부)
 @app.post("/api/transform")
 async def transform_face(
@@ -470,38 +555,85 @@ async def transform_face(
         if not output_images:
             raise HTTPException(status_code=500, detail="변환 실패: 결과 이미지를 찾을 수 없습니다.")
 
-        # 첫 번째 결과 이미지 URL 사용
-        result_image_url = output_images[0]
-        print(f"DEBUG: 결과 이미지 URL: {result_image_url}")
-        
-        # 결과 이미지 URL 사용
-        result_image_url = output_images[0]
-        print(f"DEBUG: 결과 이미지 URL: {result_image_url}")
-        
-        # ComfyUI 출력 디렉토리에서 파일 경로 구성
-        comfy_output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_url)
-        print(f"DEBUG: 로컬 파일 경로: {comfy_output_path}")
-        
-        # Firebase에 업로드 (results/ 폴더에 저장)
-        firebase_path = f"results/{str(uuid.uuid4())}.png"
+        # 결과 이미지 검색 - 최신 파일 우선 사용
+        normalized_output_dir = COMFYUI_OUTPUT_DIR.replace('\\', '/')
+        try:
+            # 1. 먼저 ComfyUI가 반환한 파일명으로 시도
+            result_image_url = output_images[0]  # ComfyUI에서 반환한 파일명
+            comfy_output_path = os.path.join(normalized_output_dir, result_image_url).replace('\\', '/')
+            
+            # 2. 파일이 없으면 최신 파일 찾기
+            if not os.path.exists(comfy_output_path):
+                print(f"파일을 찾을 수 없음: {comfy_output_path}")
+                
+                # 디렉토리의 모든 파일 가져오기
+                all_files = os.listdir(normalized_output_dir)
+                
+                # 파일이 있으면 최신 파일 사용
+                if all_files:
+                    # 수정 시간 기준으로 정렬
+                    all_files.sort(key=lambda x: os.path.getmtime(os.path.join(normalized_output_dir, x)), reverse=True)
+                    newest_file = all_files[0]
+                    result_image_url = newest_file
+                    comfy_output_path = os.path.join(normalized_output_dir, newest_file).replace('\\', '/')
+                    print(f"최신 파일 사용: {comfy_output_path}")
+        except Exception as e:
+            print(f"결과 이미지 검색 중 오류: {str(e)}")
+
+        # Firebase에 업로드
         firebase_url = None
-        
-        # 파일이 존재하는지 확인
         if os.path.exists(comfy_output_path):
-            print(f"Firebase 업로드 시도: {comfy_output_path} -> {firebase_path}")
             try:
+                firebase_path = f"results/{str(uuid.uuid4())}.png"
                 firebase_url = upload_image_to_firebase(comfy_output_path, firebase_path)
-                print(f"Firebase 업로드 완료: {firebase_url}")
-            except Exception as upload_error:
-                print(f"Firebase 업로드 실패: {str(upload_error)}")
-        else:
-            print(f"경고: 로컬 파일을 찾을 수 없음: {comfy_output_path}")
-        
-        # 응답 반환 (기존 ComfyUI URL과 함께 Firebase URL도 반환)
+                print(f"Firebase 업로드 성공: {firebase_url}")
+            except Exception as e:
+                print(f"Firebase 업로드 실패: {str(e)}")
+
+        # ComfyUI에서 직접 이미지 다운로드 시도
+        try:
+            comfy_url = f"{COMFYUI_API_URL}/view?filename={result_image_url}&subfolder=&type=output"
+            print(f"ComfyUI에서 이미지 다운로드 시도: {comfy_url}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(comfy_url) as response:
+                    if response.status == 200:
+                        # 이미지 다운로드 성공
+                        image_data = await response.read()
+                        print(f"이미지 다운로드 성공: {len(image_data)} 바이트")
+                        
+                        # 이미지를 출력 디렉토리에 저장
+                        os.makedirs(COMFYUI_OUTPUT_DIR, exist_ok=True)
+                        output_path = os.path.join(COMFYUI_OUTPUT_DIR, result_image_url)
+                        
+                        with open(output_path, 'wb') as f:
+                            f.write(image_data)
+                        print(f"이미지 저장 완료: {output_path}")
+                        
+                        # Firebase 업로드
+                        firebase_url = None
+                        try:
+                            firebase_path = f"results/{str(uuid.uuid4())}.png"
+                            firebase_url = upload_image_to_firebase(output_path, firebase_path)
+                            print(f"Firebase 업로드 완료: {firebase_url}")
+                        except Exception as e:
+                            print(f"Firebase 업로드 실패: {str(e)}")
+                        
+                        # 응답 반환
+                        return {
+                            "status": "success",
+                            "result_image_url": comfy_url,  # 완전한 ComfyUI URL 반환
+                            "firebase_url": firebase_url,
+                            "message": "얼굴 변환이 완료되었습니다."
+                        }
+        except Exception as e:
+            print(f"ComfyUI에서 이미지 다운로드 실패: {str(e)}")
+
+        # 이전 방식으로 포맷된 응답 유지
         return {
             "status": "success",
-            "result_image_url": f"{COMFYUI_API_URL}/view?filename={result_image_url}&subfolder=&type=output",
-            "firebase_url": firebase_url,  # Firebase URL 추가
+            "result_image_url": f"{COMFYUI_API_URL}/view?filename={result_image_url}&subfolder=&type=output",  # 전체 URL 사용
+            "firebase_url": firebase_url,
             "message": "얼굴 변환이 완료되었습니다."
         }
     
@@ -778,6 +910,87 @@ async def test_comfyui_connection():
         error_msg = f"ComfyUI 연결 중 오류 발생: {str(e)}"
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
+
+# 헤어스타일 생성 엔드포인트
+@app.post("/api/hairstyle")
+async def generate_hairstyle(
+    image: UploadFile = File(...),
+    params: str = Form("{}"),
+):
+    try:
+        # 파일 크기 검증 (10MB 제한)
+        file_size_limit = 10 * 1024 * 1024  # 10MB
+        content = await image.read()
+        if len(content) > file_size_limit:
+            raise HTTPException(status_code=400, detail=f"파일 크기가 너무 큽니다: {image.filename}. 10MB 이하의 파일만 허용됩니다.")
+        
+        # 파일 포인터 위치 초기화
+        await image.seek(0)
+        
+        # 파일 타입 검증
+        if not image.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail=f"잘못된 파일 형식: {image.filename}. 이미지 파일만 허용됩니다.")
+        
+        # JSON 파라미터 파싱
+        try:
+            parsed_params = json.loads(params)
+            # 파싱된 데이터 검증
+            if not isinstance(parsed_params, dict):
+                raise HTTPException(status_code=400, detail="잘못된 파라미터 형식. 유효한 JSON 객체가 필요합니다.")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="잘못된 파라미터 형식. 유효한 JSON이 필요합니다.")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"파라미터 파싱 오류: {str(e)}")
+        
+        # ComfyUI 서버 상태 확인
+        logger.info(f"ComfyUI 서버 연결 테스트 중...")
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(f"{COMFYUI_API_URL}/") as response:
+                    logger.info(f"ComfyUI 서버 응답: {response.status}")
+                    if response.status != 200:
+                        raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
+            except aiohttp.ClientError:
+                raise HTTPException(status_code=503, detail="ComfyUI 서버에 연결할 수 없습니다.")
+        
+        # 파일 콘텐츠 읽기
+        content = await image.read()
+        
+        # 헤어스타일 생성 작업 시작
+        logger.info("헤어스타일 생성 작업 시작...")
+        
+        # 워크플로우 파일 경로 설정
+        workflow_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workflow', 'HAIReditFinish.json')
+        if not os.path.exists(workflow_path):
+            workflow_path = os.getenv('HAIRSTYLE_WORKFLOW_PATH')
+            if not workflow_path or not os.path.exists(workflow_path):
+                raise HTTPException(status_code=404, detail="워크플로우 파일을 찾을 수 없습니다.")
+        
+        # 처리 시작 (타임아웃: 30분)
+        result_images = await HairStyle.process_hairstyle_generation(
+            content,
+            parsed_params,
+            workflow_path,
+            timeout_minutes=30
+        )
+        
+        if not result_images:
+            raise HTTPException(status_code=500, detail="헤어스타일 생성 실패: 결과 이미지를 찾을 수 없습니다.")
+        
+        # 응답 반환
+        return {
+            "status": "success",
+            "results": result_images,
+            "message": "헤어스타일 생성이 완료되었습니다."
+        }
+    
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        logger.error("상세 오류: %s", error_detail)
+        raise HTTPException(status_code=500, detail=f"헤어스타일 생성 실패: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

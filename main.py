@@ -8,8 +8,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import asyncio
 import aiohttp
-import firebase_admin
-
+from firebase_admin import firestore
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.websockets import WebSocketDisconnect
 from firebase_admin import credentials, initialize_app, storage
 import face
 import httpx
@@ -25,6 +26,11 @@ import HairStyle
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any, List, Tuple
+import Aichat
+from fastapi import WebSocketDisconnect, WebSocket
+from logging.handlers import RotatingFileHandler
+import sys
+
 
 
 load_dotenv()
@@ -57,6 +63,44 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 로그 폴더 생성
+log_dir = "logs"
+os.makedirs(log_dir, exist_ok=True)
+
+# 로그 포맷 설정
+log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+formatter = logging.Formatter(log_format)
+
+# 파일 핸들러 설정 (파일에 로그 저장)
+file_handler = RotatingFileHandler(
+    os.path.join(log_dir, "api.log"),
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.INFO)
+
+# 콘솔 핸들러 설정 (콘솔에 로그 출력)
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+console_handler.setLevel(logging.INFO)
+
+# 루트 로거 설정
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
+
+# FastAPI 앱 로거 설정
+logger = logging.getLogger("app")
+logger.setLevel(logging.INFO)
+
+# 특정 모듈 로깅 레벨 설정 (디버깅이 필요한 경우)
+logging.getLogger("uvicorn").setLevel(logging.WARNING)
+logging.getLogger("fastapi").setLevel(logging.WARNING)
+
+logger.info("=== 서버 시작 ===")
 # 배경화면 생성 요청 모델
 class BackgroundRequest(BaseModel):
     day: str
@@ -991,6 +1035,39 @@ async def generate_hairstyle(
         error_detail = traceback.format_exc()
         logger.error("상세 오류: %s", error_detail)
         raise HTTPException(status_code=500, detail=f"헤어스타일 생성 실패: {str(e)}")
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    try:
+        # 클라이언트 연결 수락
+        await websocket.accept()
+        logger.info("WebSocket 연결 수락됨")
+        
+        # Firestore DB 인스턴스 얻기
+        db = firestore.client()
+        
+        # 클라이언트에게 연결 성공 메시지 전송
+        await websocket.send_text(json.dumps({
+            "type": "connection_established",
+            "message": "서버에 성공적으로 연결되었습니다."
+        }))
+        
+        # Aichat 모듈로 처리 위임 - already_accepted=True 전달
+        await Aichat.websocket_endpoint(websocket, db, already_accepted=True)
+        
+    except WebSocketDisconnect:
+        logger.info("WebSocket 연결이 종료되었습니다")
+    except Exception as e:
+        logger.error(f"WebSocket 처리 중 오류 발생: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # 연결이 아직 살아있다면 오류 메시지 전송 시도
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": f"서버 오류: {str(e)}"
+            }))
+        except:
+            pass
 
 if __name__ == "__main__":
     import uvicorn

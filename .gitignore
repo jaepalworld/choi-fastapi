@@ -16,6 +16,7 @@ __pycache__/
 
 # 로그 파일
 *.log
+logs/
 
 # 시스템 파일
 .DS_Store
@@ -29,6 +30,16 @@ build/
 # 기타 임시 파일
 *.tmp
 *.bak
+
 # Firebase credentials
 *-adminsdk*.json
 firebase-adminsdk-credentials.json
+
+# 워크플로우 JSON 파일 (비공개)
+workflow/*.json
+
+# 출력 디렉토리
+output/
+
+# 환경 변수 파일
+.env

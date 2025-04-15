@@ -29,3 +29,6 @@ build/
 # 기타 임시 파일
 *.tmp
 *.bak
+# Firebase credentials
+*-adminsdk*.json
+firebase-adminsdk-credentials.json

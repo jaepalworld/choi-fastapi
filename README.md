@@ -63,43 +63,8 @@ ComfyUI를 활용한 고급 이미지 처리 기능과 Firebase 연동을 통한
 - Firebase 프로젝트 생성 및 API 키 발급
 - Ollama 설치 (https://ollama.ai)
 
-### 2. 저장소 복제 및 의존성 설치
 
-```bash
-# 저장소 복제
-git clone https://github.com/yourusername/hairai-backend.git
-cd hairai-backend
 
-# 가상 환경 생성 및 활성화
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 의존성 설치
-pip install -r requirements.txt
-```
-
-### 3. 환경 설정
-
-`.env` 파일을 프로젝트 루트에 생성하고 다음 내용을 추가합니다:
-
-```
-COMFYUI_API_URL=http://127.0.0.1:8188
-COMFYUI_OUTPUT_DIR=output
-BACKCLEAR_WORKFLOW_PATH=workflow/BackClear.json
-BACKGROUND_WORKFLOW_PATH=workflow/BackCreate.json
-HAIRSTYLE_WORKFLOW_PATH=workflow/HAIReditFinish.json
-```
-
-### 4. Firebase 설정
-
-1. Firebase 콘솔에서 서비스 계정 키를 다운로드
-2. 다운로드한 키 파일을 `firebase-adminsdk-credentials.json`으로 저장하여 프로젝트 루트에 위치
-
-### 5. 서버 실행
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
 
 ## 프로젝트 구조
 
@@ -116,10 +81,10 @@ hairai-backend/
 ├── .gitignore            # Git 무시 파일 목록
 ├── firebase-adminsdk-credentials.json  # Firebase 인증 키 (비공개)
 └── workflow/             # ComfyUI 워크플로우 JSON 파일
-    ├── BackClear.json    # 배경 제거 워크플로우
-    ├── BackCreate.json   # 배경 생성 워크플로우
-    ├── HAIReditFinish.json  # 헤어스타일 변환 워크플로우
-    └── facedefault.json  # 얼굴 변환 워크플로우
+    ├── BackClear.json    # 배경 제거 워크플로우(비공개)
+    ├── BackCreate.json   # 배경 생성 워크플로우(비공개)
+    ├── HAIReditFinish.json  # 헤어스타일 변환 워크플로우(비공개)
+    └── facedefault.json  # 얼굴 변환 워크플로우(비공개)
 ```
 
 ## API 문서
@@ -188,7 +153,6 @@ ComfyUI 워크플로우 파일(.json)을 수정하여 이미지 처리 파이프
 3. 해당 파일을 workflow/ 디렉토리에 저장
 4. 환경 변수에서 경로 업데이트
 
-## 문제 해결
 
 ### 일반적인 문제
 - **ConnectionError**: ComfyUI 서버가 실행 중인지 확인
@@ -198,11 +162,6 @@ ComfyUI 워크플로우 파일(.json)을 수정하여 이미지 처리 파이프
   - 워크플로우 최적화
   - 배치 처리 사용
 
-### 로깅
-문제 진단을 위해 logs/ 디렉토리의 로그 파일을 확인하세요:
-```bash
-tail -f logs/api.log
-```
 
 ## 워크플로우 파일 설정
 
